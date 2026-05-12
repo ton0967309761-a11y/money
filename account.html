@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoneyTracker Real-time</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+        :root { --primary: #4a90e2; --success: #2ecc71; --danger: #e74c3c; --bg: #f4f7f6; }
+        body { font-family: 'Tahoma', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 25px; text-align: center; }
+        .box { padding: 15px; border-radius: 10px; color: white; font-weight: bold; }
+        .form-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; font-size: 14px; }
+        .img-preview { width: 50px; height: 50px; object-fit: cover; border-radius: 5px; cursor: pointer; }
+        #loading { text-align: center; color: #7f8c8d; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 style="text-align:center; color:var(--primary);">MoneyTracker (Shared)</h2>
+    
+    <div class="summary">
+        <div class="box" style="background:var(--success)">รายรับ<br><span id="total-inc">0</span></div>
+        <div class="box" style="background:var(--danger)">รายจ่าย<br><span id="total-exp">0</span></div>
+        <div class="box" style="background:var(--primary)">คงเหลือ<br><span id="total-bal">0</span></div>
+    </div>
+
+    <div class="form-group">
+        <input type="text" id="desc" placeholder="รายการ">
+        <input type="number" id="amt" placeholder="จำนวนเงิน">
+        <select id="type">
+            <option value="income">รายรับ (+)</option>
+            <option value="expense">รายจ่าย (-)</option>
+        </select>
+        <input type="file" id="imgInput" accept="image/*">
+        <button id="addBtn" onclick="sendData()">บันทึกข้อมูลเข้าระบบกลุ่ม</button>
+        <div id="loading">กำลังประมวลผล...</div>
+    </div>
+
+    <table>
+        <thead>
+            <tr><th>รูป</th><th>รายการ</th><th>เงิน</th><th>ลบ</th></tr>
+        </thead>
+        <tbody id="list"></tbody>
+    </table>
+</div>
+
+<script>
+    // --- ตั้งค่า Firebase ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyDgaQB4BoHQtnuPkc7DrnXNd4XerOlZdBk",
+        authDomain: "moneytracker-e0e46.firebaseapp.com",
+        databaseURL: "https://moneytracker-e0e46-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "moneytracker-e0e46",
+        storageBucket: "moneytracker-e0e46.firebasestorage.app",
+        messagingSenderId: "362554380631",
+        appId: "1:362554380631:web:9fee89ce2199c54cf12e12"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // --- ฟังก์ชันส่งข้อมูล ---
+    async function sendData() {
+        const desc = document.getElementById('desc').value;
+        const amt = parseFloat(document.getElementById('amt').value);
+        const type = document.getElementById('type').value;
+        const file = document.getElementById('imgInput').files[0];
+        const btn = document.getElementById('addBtn');
+        const loader = document.getElementById('loading');
+
+        if (!desc || isNaN(amt)) return alert("กรุณากรอกข้อมูลให้ครบ");
+
+        btn.disabled = true;
+        loader.style.display = "block";
+
+        let imgBase64 = "";
+        if (file) {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async () => {
+                imgBase64 = reader.result;
+                await pushToFirebase(desc, amt, type, imgBase64);
+            };
+        } else {
+            await pushToFirebase(desc, amt, type, "");
+        }
+    }
+
+    async function pushToFirebase(desc, amt, type, img) {
+        const newRef = db.ref('transactions').push();
+        await newRef.set({ desc, amt, type, img, timestamp: Date.now() });
+        
+        document.getElementById('desc').value = '';
+        document.getElementById('amt').value = '';
+        document.getElementById('imgInput').value = '';
+        document.getElementById('addBtn').disabled = false;
+        document.getElementById('loading').style.display = "none";
+    }
+
+    // --- ฟังก์ชันดึงข้อมูลแบบ Real-time ---
+    db.ref('transactions').on('value', (snapshot) => {
+        const list = document.getElementById('list');
+        list.innerHTML = "";
+        let tInc = 0, tExp = 0;
+        
+        const data = snapshot.val();
+        if (data) {
+            // เรียงลำดับจากใหม่ไปเก่า
+            const entries = Object.entries(data).reverse();
+            entries.forEach(([id, item]) => {
+                if (item.type === 'income') tInc += item.amt; else tExp += item.amt;
+
+                list.innerHTML += `<tr>
+                    <td>${item.img ? `<img src="${item.img}" class="img-preview" onclick="window.open(this.src)">` : '-'}</td>
+                    <td>${item.desc}<br><small style="color:#aaa">${item.type === 'income' ? 'รับ' : 'จ่าย'}</small></td>
+                    <td style="color:${item.type === 'income' ? 'green' : 'red'}"><b>${item.amt.toLocaleString()}</b></td>
+                    <td><button style="padding:4px 8px; background:#e74c3c; font-size:10px" onclick="deleteItem('${id}')">X</button></td>
+                </tr>`;
+            });
+        }
+        document.getElementById('total-inc').innerText = tInc.toLocaleString();
+        document.getElementById('total-exp').innerText = tExp.toLocaleString();
+        document.getElementById('total-bal').innerText = (tInc - tExp).toLocaleString();
+    });
+
+    function deleteItem(id) {
+        if (confirm("ลบรายการนี้ใช่หรือไม่?")) db.ref('transactions/' + id).remove();
+    }
+</script>
+
+</body>
+</html>
